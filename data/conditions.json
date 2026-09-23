@@ -1,0 +1,10 @@
+{
+  "symptoms": ["fever", "chills", "headache", "cough", "sore throat"],
+  "red_flags": ["chest pain", "difficulty breathing"],
+  "conditions": {
+    "Malaria": {"fever": 3, "chills": 3, "headache": 2}
+  },
+  "guidance": {
+    "Malaria": "Rest and drink fluids. See a clinic for testing."
+  }
+}
