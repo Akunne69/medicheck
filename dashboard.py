@@ -1,209 +1,85 @@
 
-import matplotlib.pyplot as plt
-from database import get_connection
+"""Statistics dashboard: pandas summaries drawn with matplotlib, embedded in Tkinter.
+OWNER: Muhammad Abdullahi (branch: feature/dashboard-reports)
+
+Contract: show_dashboard(parent) opens a Toplevel window with the charts.
+Also exposes build_stats_dataframe() for reuse/testing without opening a window.
+"""
+import tkinter as tk
+from tkinter import ttk
+
+import pandas as pd
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
+
+import database
+
+AGE_BINS = [0, 12, 18, 30, 45, 60, 120]
+AGE_LABELS = ["0-11", "12-17", "18-29", "30-44", "45-59", "60+"]
 
 
-def _cursor():
-    """Return a database cursor that closes with its connection."""
-    connection = get_connection()
-    try:
-        return connection.cursor()
-    finally:
-        connection.close()
+def build_age_group_counts(ages):
+    """pandas: bucket ages into groups and count them."""
+    if not ages:
+        return pd.Series(dtype=int)
+    series = pd.cut(pd.Series(ages), bins=AGE_BINS, labels=AGE_LABELS, right=False)
+    return series.value_counts().reindex(AGE_LABELS, fill_value=0)
 
 
-def create_dashboard(data):
-    figure, axes = plt.subplots(
-        2,
-        2,
-        figsize=(14, 9)
-    )
+def show_dashboard(parent=None):
+    """Open a window with four charts: common symptoms, common conditions,
+    urgency breakdown, and age groups."""
+    stats = database.get_stats()
 
-    figure.suptitle(
-        f"MediCheck Dashboard\n"
-        f"Total Assessments: {data['total_assessments']}",
-        fontsize=18,
-        fontweight="bold"
-    )
+    win = tk.Toplevel(parent) if parent else tk.Tk()
+    win.title("MediCheck - Statistics Dashboard")
+    win.geometry("900x700")
 
-    if data["total_assessments"] == 0:
-        for axis in axes.flat:
-            axis.axis("off")
+    ttk.Label(win, text=f"Total assessments recorded: {stats['total_assessments']}",
+              font=("Arial", 13, "bold")).pack(pady=(10, 0))
 
-        figure.text(
-            0.5,
-            0.5,
-            "Statistics will appear once patients are assessed.",
-            ha="center",
-            va="center",
-            fontsize=16
-        )
+    if stats["total_assessments"] == 0:
+        ttk.Label(win, text="No assessments yet. Statistics will appear here once patients are assessed.",
+                  font=("Arial", 11)).pack(pady=40)
+        return win
 
-        figure.tight_layout(rect=[0, 0, 1, 0.93])
-        return figure
+    fig = Figure(figsize=(9, 7), dpi=100)
+    ax1, ax2, ax3, ax4 = fig.subplots(2, 2).flatten()
 
-    # Symptoms chart
-    symptom_rows = data["common_symptoms"]
+    # 1. Common symptoms
+    if stats["common_symptoms"]:
+        names, counts = zip(*stats["common_symptoms"])
+        ax1.barh(names, counts, color="#2E5C9A")
+        ax1.invert_yaxis()
+        ax1.set_title("Most common symptoms")
+        ax1.tick_params(labelsize=8)
 
-    axes[0, 0].barh(
-        [row["symptom"] for row in symptom_rows][::-1],
-        [row["total"] for row in symptom_rows][::-1],
-        color="#4C78A8"
-    )
+    # 2. Common conditions
+    if stats["common_conditions"]:
+        names, counts = zip(*stats["common_conditions"])
+        ax2.barh(names, counts, color="#1F3864")
+        ax2.invert_yaxis()
+        ax2.set_title("Most frequently matched conditions")
+        ax2.tick_params(labelsize=8)
 
-    axes[0, 0].set_title("Most Common Symptoms")
-    axes[0, 0].set_xlabel("Number of reports")
+    # 3. Urgency breakdown
+    urgency_counts = stats["urgency_counts"]
+    if urgency_counts:
+        colors = {"GREEN": "#2e7d32", "YELLOW": "#f9a825", "RED": "#c62828"}
+        labels = list(urgency_counts.keys())
+        ax3.pie(urgency_counts.values(), labels=labels, autopct="%1.0f%%",
+                colors=[colors.get(l, "gray") for l in labels])
+        ax3.set_title("Urgency breakdown")
 
-    # Conditions chart
-    condition_rows = data["common_conditions"]
+    # 4. Age groups (pandas bucketing)
+    age_counts = build_age_group_counts(stats["ages"])
+    if not age_counts.empty:
+        ax4.bar(age_counts.index, age_counts.values, color="#5B8FD1")
+        ax4.set_title("Assessments by age group")
+        ax4.tick_params(labelsize=8)
 
-    axes[0, 1].barh(
-        [row["condition"] for row in condition_rows][::-1],
-        [row["total"] for row in condition_rows][::-1],
-        color="#59A14F"
-    )
-
-    axes[0, 1].set_title("Most Frequently Matched Conditions")
-    axes[0, 1].set_xlabel("Number of assessments")
-
-    # Urgency chart
-    urgency_counts = {
-        "GREEN": 0,
-        "YELLOW": 0,
-        "RED": 0,
-    }
-
-    for row in data["urgency_breakdown"]:
-        urgency = row["urgency"].upper()
-
-        if urgency in urgency_counts:
-            urgency_counts[urgency] = row["total"]
-
-    axes[1, 0].pie(
-        urgency_counts.values(),
-        labels=urgency_counts.keys(),
-        colors=["#59A14F", "#F28E2B", "#E15759"],
-        autopct="%1.1f%%",
-        startangle=90
-    )
-
-    axes[1, 0].set_title("Urgency Breakdown")
-
-    # Age-group chart
-    age_labels = [
-        "0-11",
-        "12-17",
-        "18-29",
-        "30-44",
-        "45-59",
-        "60+",
-    ]
-
-    age_counts = [
-        data["age_groups"].get(age_group, 0)
-        for age_group in age_labels
-    ]
-
-    axes[1, 1].bar(
-        age_labels,
-        age_counts,
-        color="#B279A2"
-    )
-
-    axes[1, 1].set_title("Assessments by Age Group")
-    axes[1, 1].set_xlabel("Age group")
-    axes[1, 1].set_ylabel("Number of assessments")
-
-    figure.tight_layout(rect=[0, 0, 1, 0.93])
-
-    return figure
-
-
-def show_dashboard(data):
-    figure = create_dashboard(data)
-    figure.show()
-
-def get_dashboard_data():
-    with _cursor() as cur:
-        # Total saved assessments
-        cur.execute("""
-            SELECT COUNT(*) AS total
-            FROM assessments
-        """)
-        total_assessments = cur.fetchone()["total"]
-
-        # Most common symptoms
-        cur.execute("""
-            SELECT symptom, COUNT(*) AS total
-            FROM assessment_symptoms
-            GROUP BY symptom
-            ORDER BY total DESC
-            LIMIT 10
-        """)
-        common_symptoms = [
-            dict(row) for row in cur.fetchall()
-        ]
-
-        # Most frequently matched conditions
-        cur.execute("""
-            SELECT top_match AS condition, COUNT(*) AS total
-            FROM assessments
-            WHERE top_match IS NOT NULL
-              AND top_match != ''
-            GROUP BY top_match
-            ORDER BY total DESC
-            LIMIT 10
-        """)
-        common_conditions = [
-            dict(row) for row in cur.fetchall()
-        ]
-
-        # Urgency breakdown
-        cur.execute("""
-            SELECT urgency, COUNT(*) AS total
-            FROM assessments
-            WHERE urgency IN ('GREEN', 'YELLOW', 'RED')
-            GROUP BY urgency
-        """)
-        urgency_breakdown = [
-            dict(row) for row in cur.fetchall()
-        ]
-
-        # Assessments grouped by age range
-        cur.execute("""
-            SELECT
-                CASE
-                    WHEN patients.age BETWEEN 0 AND 11 THEN '0-11'
-                    WHEN patients.age BETWEEN 12 AND 17 THEN '12-17'
-                    WHEN patients.age BETWEEN 18 AND 29 THEN '18-29'
-                    WHEN patients.age BETWEEN 30 AND 44 THEN '30-44'
-                    WHEN patients.age BETWEEN 45 AND 59 THEN '45-59'
-                    WHEN patients.age >= 60 THEN '60+'
-                END AS age_group,
-                COUNT(*) AS total
-            FROM assessments
-            INNER JOIN patients
-                ON assessments.patient_id = patients.id
-            GROUP BY age_group
-        """)
-        age_rows = cur.fetchall()
-
-    age_order = ["0-11", "12-17", "18-29", "30-44", "45-59", "60+"]
-
-    age_groups = {
-        age_group: 0
-        for age_group in age_order
-    }
-
-    for row in age_rows:
-        if row["age_group"] in age_groups:
-            age_groups[row["age_group"]] = row["total"]
-
-    return {
-        "total_assessments": total_assessments,
-        "common_symptoms": common_symptoms,
-        "common_conditions": common_conditions,
-        "urgency_breakdown": urgency_breakdown,
-        "age_groups": age_groups,
-    }
-
+    fig.tight_layout()
+    canvas = FigureCanvasTkAgg(fig, master=win)
+    canvas.draw()
+    canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=10)
+    return win
